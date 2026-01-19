@@ -1,6 +1,6 @@
-# AutoFishing Kamis
+# AutoFishing
 
-AutoFishing Kamis es un script de AutoHotkey v1 para automatizar la pesca en un juego mediante detección de píxeles y control de ratón/teclado.
+AutoFishing es un script de AutoHotkey v1 para automatizar la pesca en un juego mediante detección de píxeles y control de ratón/teclado.
 
 ## Uso básico
 

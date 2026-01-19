@@ -43,7 +43,7 @@ Init() {
     ; -- Temporizadores y tolerancias
     Config.TimerInterval := 20            ; ms entre ciclos de comprobación
     Config.TimeoutMs := 30000             ; ms para cancelar si no aparece el segundo píxel
-    Config.Tolerance := { primary: 12     ; tolerancia para colores principales (inicio/fin/reset)
+    Config.Tolerance := { primary: 20     ; tolerancia para colores principales (inicio/fin/reset) - valor alto para ciclos día/noche
         , arrow: 15 }     ; tolerancia para colores del minijuego (flechas)
 
     ; -- Tiempos de espera (centralizados para fácil ajuste)
@@ -56,7 +56,7 @@ Init() {
     Config.Timings.finishBetweenClicks := 500    ; espera entre confirmaciones finales
     Config.Timings.continueCheckDelay := 1500    ; espera antes de comprobar botón continuar
     Config.Timings.continueBeforeClick := 1000   ; espera después de detectar botón continuar antes de pulsar
-    Config.Timings.continueFishingWait := 1000   ; espera tras pulsar botón continuar antes de recast
+    Config.Timings.continueFishingWait := 2000   ; espera tras pulsar botón continuar antes de recast
     Config.Timings.rewardPopupWait := 500        ; espera tras cerrar popup de recompensa
     Config.Timings.tensionRelease := 1000        ; tiempo de release cuando tensión llega al 100%
 
@@ -89,6 +89,12 @@ Init() {
 
     ; -- Detectar ventana del juego y obtener dimensiones
     DetectGameWindow()
+
+    ; -- Validar que la ventana tiene dimensiones válidas
+    if (Config.GameWindow.w < 100 || Config.GameWindow.h < 100) {
+        MsgBox, 16, Error, La ventana del juego no se detectó correctamente o está minimizada.`nAsegúrate de que el juego esté abierto y visible antes de ejecutar el script.
+        ExitApp
+    }
 
     ; -- Calcular escala basada en el tamaño de la ventana del juego
     Config.Scale := { x: (Config.GameWindow.w + 0.0) / Config.Base.w
@@ -255,20 +261,27 @@ CheckPixelsLogic() {
         return
     }
 
-    ; -- 2) Watchdog: si han pasado 20s sin pescar ningún pez, lanzar caña
+    ; -- 2) Watchdog: si han pasado 30s sin pescar ningún pez, recoger y relanzar caña
     if (!State.holding && State.lastCastAttempt && (A_TickCount - State.lastCastAttempt > Config.TimeoutMs)) {
-        Log("WARN", "Watchdog: 20s sin actividad de pesca -> lanzando caña")
+        Log("WARN", "Watchdog: 30s sin actividad de pesca -> recogiendo y relanzando caña")
         SaveMousePositionOnce()
+        ClipCursorToGame()
         MoveMouseTo("centerHold")
         Sleep, % Config.Timings.clickDelay
+        ; Primero recoger (click derecho) para cancelar cualquier estado anterior
+        Click, right
+        Sleep, 500
+        ; Ahora lanzar de nuevo
         Click, left
         State.lastCastAttempt := A_TickCount
         RestoreMousePosition()
+        ReleaseCursorClip()
     }
 
     ; -- 3) Detectar primer píxel (empezar a mantener click = pica el pez)
     if (!State.holding && ColorCloseEnough(startRead, Config.Colors.start, Config.Tolerance.primary)) {
         SaveMousePositionOnce()
+        ClipCursorToGame()
         MoveMouseTo("centerHold")
         Sleep, % Config.Timings.clickDelay
         Click, down, left
@@ -298,6 +311,7 @@ CheckPixelsLogic() {
 
         State.lastCastAttempt := A_TickCount
         RestoreMousePosition()
+        ReleaseCursorClip()
 
         Log("INFO", "FINISH detectado -> Soltado y confirmaciones enviadas")
     }
@@ -345,6 +359,7 @@ CheckPixelsLogic() {
         MoveMouseTo("centerHold")
         Click, left
         RestoreMousePosition()
+        ReleaseCursorClip()
         Log("INFO", "Recast ejecutado -> El timer detectará START en próximos ciclos")
         return
     }
@@ -507,6 +522,31 @@ ColorCloseEnough(color1, color2, tolerance := 10) {
         && Abs(c1b - c2b) <= tolerance )
 }
 
+; Restringe el cursor dentro de la ventana del juego (evita clics accidentales fuera)
+ClipCursorToGame() {
+    global Config
+    ; Margen de seguridad de 10 píxeles para evitar bordes
+    margin := 10
+    left   := Config.GameWindow.x + margin
+    top    := Config.GameWindow.y + margin
+    right  := Config.GameWindow.x + Config.GameWindow.w - margin
+    bottom := Config.GameWindow.y + Config.GameWindow.h - margin
+
+    VarSetCapacity(rect, 16, 0)
+    NumPut(left,   rect, 0,  "Int")
+    NumPut(top,    rect, 4,  "Int")
+    NumPut(right,  rect, 8,  "Int")
+    NumPut(bottom, rect, 12, "Int")
+    DllCall("ClipCursor", "Ptr", &rect)
+    Log("DEBUG", "Cursor restringido a ventana del juego")
+}
+
+; Libera la restricción del cursor
+ReleaseCursorClip() {
+    DllCall("ClipCursor", "Ptr", 0)
+    Log("DEBUG", "Restricción de cursor liberada")
+}
+
 ; Libera todos los recursos de estado al desactivar.
 SafeReleaseAll() {
     global State
@@ -520,6 +560,7 @@ SafeReleaseAll() {
     State.tensionReleaseStart := 0
     ReleaseKeyIfAny()
     RestoreMousePosition()
+    ReleaseCursorClip()
     Log("INFO", "SafeReleaseAll: estado limpiado")
 }
 
