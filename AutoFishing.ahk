@@ -4,30 +4,16 @@ SetWorkingDir %A_ScriptDir%
 #SingleInstance Force
 
 ; ==============================================
-;  AutoFishing
+;  AutoFishing - Refactored
 ; ----------------------------------------------
-;   @name: AutoFishing.ahk
-;   @description: Automatiza la pesca en un juego mediante detección de píxeles y manejo del ratón/teclado.
-;   @author: Haru
-;   @author: Joseleelsuper
-;   @bpsr_guild: HusaresAlados [1818]
-;   @use
-;       - Ve a pescar, tira el cebo y pulsa la tecla F9 para activar/desactivar la automatización.
-;       - Pulsa la tecla F10 para detener el script completamente.
-;       - El script detecta:
-;           · Píxel de inicio (comenzar a mantener click).
-;           · Píxel de finalización (soltar click y confirmar).
-;           · Píxel de reinicio (flujo para reintentar manualmente).
-;           · Minijuego de flechas (mantiene A o D mientras corresponda).
-;       - Todos los puntos y colores se escalan automáticamente partiendo de una base 1920x1080.
+;   @description: Automatiza la pesca mediante detección de píxeles
+;   @author: Haru, Joseleelsuper
+;   @controls: F9 = Toggle ON/OFF | F10 = Salir
 ; ==============================================
 
 CoordMode, Pixel, Screen
 CoordMode, Mouse, Screen
 
-; ----------------------------
-;  Configuración y Estado
-; ----------------------------
 global Config := {}
 global State := {}
 
@@ -37,557 +23,376 @@ global State := {}
 Init() {
     global Config, State
 
-    ; -- Parámetros base de referencia
+    ; -- Referencia base
     Config.Base := { w: 1920, h: 1080 }
 
-    ; -- Temporizadores y tolerancias
-    Config.TimerInterval := 20            ; ms entre ciclos de comprobación
-    Config.TimeoutMs := 30000             ; ms para cancelar si no aparece el segundo píxel
-    Config.Tolerance := { primary: 20     ; tolerancia para colores principales (inicio/fin/reset) - valor alto para ciclos día/noche
-        , arrow: 15 }     ; tolerancia para colores del minijuego (flechas)
+    ; -- Intervalos
+    Config.TimerInterval := 50
+    Config.WatchdogTimeout := 30000            ; 30s sin pesca = relanzar
 
-    ; -- Tiempos de espera (centralizados para fácil ajuste)
+    ; -- Tolerancias de color
+    Config.Tolerance := { primary: 20, arrow: 15 }
+
+    ; -- Tiempos de espera (ms)
     Config.Timings := {}
-    Config.Timings.clickDelay := 10              ; espera antes/después de clicks críticos
-    Config.Timings.resetMenuOpen := 500          ; espera antes de enviar 'm' en reset
-    Config.Timings.resetMenuWait := 1000         ; espera tras 'm' antes del primer clic
-    Config.Timings.resetMenuConfirm := 1500      ; espera entre clics del menú reset
-    Config.Timings.finishBeforeConfirm := 1000   ; espera tras soltar antes de confirmar
-    Config.Timings.finishBetweenClicks := 500    ; espera entre confirmaciones finales
-    Config.Timings.continueCheckDelay := 1500    ; espera antes de comprobar botón continuar
-    Config.Timings.continueBeforeClick := 1000   ; espera después de detectar botón continuar antes de pulsar
-    Config.Timings.continueFishingWait := 2000   ; espera tras pulsar botón continuar antes de recast
-    Config.Timings.rewardPopupWait := 500        ; espera tras cerrar popup de recompensa
-    Config.Timings.tensionRelease := 1000        ; tiempo de release cuando tensión llega al 100%
+    Config.Timings.afterFail := 3000           ; Espera tras fallo antes de relanzar
+    Config.Timings.afterFinish := 2000         ; Espera tras éxito para botón continuar
+    Config.Timings.afterContinue := 1000       ; Espera tras pulsar continuar antes de relanzar
+    Config.Timings.tensionRelease := 800       ; Tiempo soltando por tensión 100%
+    Config.Timings.clickDelay := 50            ; Delay entre acciones de click
+    Config.Timings.resetMenuWait := 1000       ; Espera tras abrir menú reset
 
     ; -- Colores objetivo (0xRRGGBB)
-    Config.Colors := { start: 0xFF5501           ; Píxel que indica que hay que mantener click
-        , finish: 0xE8E8E8          ; Píxel que indica que hay que soltar y confirmar
-        , reset:  0x767C82          ; Píxel que activa flujo de reinicio
-        , continueFishing: 0xE8E8E8 ; Botón "continuar pescando"
-        , tensionMax: 0xFFFFFF      ; Barra de tensión al 100% (blanco puro)
-        , rewardBorder: 0xC6A777    ; Borde dorado del popup de recompensa mensual
-        , arrowA: [0xFE6C06, 0xFAB916, 0xFF5601]  ; Colores para flecha A
-        , arrowD: [0xFF5A01, 0xFAB916, 0xFF5601] } ; Colores para flecha D
+    Config.Colors := {}
+    Config.Colors.start := 0xFF5501            ; Pez picando (mantener click)
+    Config.Colors.finish := 0xE8E8E8           ; Pesca completada
+    Config.Colors.reset := 0x767C82            ; Caña rota (necesita reset)
+    Config.Colors.tensionMax := 0xFFFFFF       ; Barra tensión al 100%
+    Config.Colors.arrowA := [0xFE6C06, 0xFAB916, 0xFF5601]
+    Config.Colors.arrowD := [0xFF5A01, 0xFAB916, 0xFF5601]
 
-    ; -- Lista de posibles ejecutables del juego
-    Config.GameWindowExecutables := ["BPSR_STEAM.exe", "BPSR_EPIC.exe", "BPSR.exe", "BPSR"]
+    ; -- Ejecutables del juego
+    Config.GameExes := ["BPSR_STEAM.exe", "BPSR_EPIC.exe", "BPSR.exe"]
 
-    ; -- Coordenadas base (en 1920x1080). Todas se escalarán al iniciar.
+    ; -- Coordenadas base (1920x1080)
     Config.PointsBase := {}
-    Config.PointsBase.centerHold      := { x:  954, y:  562 }  ; Dónde mantener click para iniciar
-    Config.PointsBase.finish          := { x: 1463, y:  974 }  ; Píxel y botón de confirmación final
-    Config.PointsBase.continueFishing := { x: 1463, y:  974 }  ; Botón "continuar pescando"
-    Config.PointsBase.resetCheck      := { x: 1650, y: 1029 }  ; Píxel que indica necesidad de reinicio
-    Config.PointsBase.menuConfirm1    := { x: 1788, y:  609 }  ; Botón a pulsar tras 'm' (dos clics)
-    Config.PointsBase.tensionBar      := { x: 1248, y:  897 }  ; Final de la barra de tensión (extremo derecho)
-    Config.PointsBase.rewardLeft      := { x:  649, y:  383 }  ; Lado izquierdo del popup de recompensa
-    Config.PointsBase.rewardRight     := { x: 1221, y:  383 }  ; Lado derecho del popup de recompensa
-    Config.PointsBase.rewardClose     := { x:  945, y:  972 }  ; Botón para cerrar popup de recompensa
-    Config.PointsBase.arrowA          := { x:  851, y:  528 }  ; Detección flecha A
-    Config.PointsBase.arrowD          := { x: 1054, y:  536 }  ; Detección flecha D
+    Config.PointsBase.center := { x: 954, y: 562 }       ; Centro (lanzar/mantener)
+    Config.PointsBase.confirm := { x: 1463, y: 974 }     ; Botón confirmar/continuar
+    Config.PointsBase.resetCheck := { x: 1650, y: 1029 } ; Detector caña rota
+    Config.PointsBase.menuBtn := { x: 1788, y: 609 }     ; Botón menú reset
+    Config.PointsBase.tensionBar := { x: 1248, y: 897 }  ; Barra tensión (extremo)
+    Config.PointsBase.arrowA := { x: 851, y: 528 }
+    Config.PointsBase.arrowD := { x: 1054, y: 536 }
 
-    ; -- Detectar ventana del juego y obtener dimensiones
+    ; -- Detectar ventana del juego
     DetectGameWindow()
-
-    ; -- Validar que la ventana tiene dimensiones válidas
-    if (Config.GameWindow.w < 100 || Config.GameWindow.h < 100) {
-        MsgBox, 16, Error, La ventana del juego no se detectó correctamente o está minimizada.`nAsegúrate de que el juego esté abierto y visible antes de ejecutar el script.
+    if (Config.Game.w < 100 || Config.Game.h < 100) {
+        MsgBox, 16, Error, No se detectó la ventana del juego.`nAbre el juego antes de ejecutar el script.
         ExitApp
     }
 
-    ; -- Calcular escala basada en el tamaño de la ventana del juego
-    Config.Scale := { x: (Config.GameWindow.w + 0.0) / Config.Base.w
-        , y: (Config.GameWindow.h + 0.0) / Config.Base.h }
-
-    ; -- Precalcular coordenadas escaladas relativas a la ventana del juego
+    ; -- Calcular escala y puntos
+    Config.Scale := { x: Config.Game.w / Config.Base.w, y: Config.Game.h / Config.Base.h }
     Config.Points := {}
     for key, pt in Config.PointsBase {
-        ; Coordenadas escaladas + offset de la ventana
-        sx := Round(pt.x * Config.Scale.x) + Config.GameWindow.x
-        sy := Round(pt.y * Config.Scale.y) + Config.GameWindow.y
-        Config.Points[key] := { x: sx, y: sy }
+        Config.Points[key] := { x: Round(pt.x * Config.Scale.x) + Config.Game.x
+                              , y: Round(pt.y * Config.Scale.y) + Config.Game.y }
     }
 
-    ; -- Flag para habilitar/deshabilitar logs
-    Config.LoggingEnabled := true
-    ; -- Ruta de log
+    ; -- Logging
+    Config.LogEnabled := true
     Config.LogPath := A_ScriptDir . "\AutoFishing.log"
 
-    ; -- Estado en memoria
-    State.toggle := false          ; Automatización activa/inactiva
-    State.holding := false         ; ¿Se está manteniendo el click?
-    State.holdStart := 0           ; Marca de tiempo en ms cuando se inició el hold
-    State.origX := 0               ; Posición original del ratón (X)
-    State.origY := 0               ; Posición original del ratón (Y)
-    State.currentKey := ""         ; "a" o "d" según minijuego; vacío si nada
-    State.tensionReleasing := false ; ¿Está en proceso de release temporal por tensión 100%?
-    State.tensionReleaseStart := 0  ; Marca de tiempo cuando se soltó por tensión
-    State.lastCastAttempt := 0      ; Se reinicia cuando pica (START) o termina de pescar (FINISH)
+    ; -- Estado inicial
+    State.active := false
+    State.fishing := false          ; ¿Pez en el anzuelo?
+    State.fishStart := 0            ; Timestamp inicio pesca
+    State.lastCast := 0             ; Timestamp último lanzamiento
+    State.tensionPause := false     ; ¿Pausado por tensión?
+    State.tensionStart := 0
+    State.currentKey := ""          ; Tecla del minijuego activa
 
-    Log("INFO", "Init completado | Ventana del juego: " . Config.GameWindow.w . "x" . Config.GameWindow.h . " en (" . Config.GameWindow.x . "," . Config.GameWindow.y . ") | ScaleX=" . Config.Scale.x . ", ScaleY=" . Config.Scale.y)
+    Log("INIT", "Ventana: " . Config.Game.w . "x" . Config.Game.h . " @ (" . Config.Game.x . "," . Config.Game.y . ") | Escala: " . Round(Config.Scale.x, 2) . "x" . Round(Config.Scale.y, 2))
 }
 
-; Detecta la ventana del juego y guarda su posición y tamaño
 DetectGameWindow() {
     global Config
-
-    hwnd := 0
-    detectedExe := ""
-
-    ; Intentar detectar la ventana con cada ejecutable posible
-    for index, exeName in Config.GameWindowExecutables {
-        WinGet, hwnd, ID, % "ahk_exe " . exeName
+    for i, exe in Config.GameExes {
+        WinGet, hwnd, ID, % "ahk_exe " . exe
         if (hwnd) {
-            detectedExe := exeName
-            Log("INFO", "Ventana del juego encontrada: " . exeName)
-            break
+            VarSetCapacity(rect, 16, 0)
+            DllCall("GetClientRect", "Ptr", hwnd, "Ptr", &rect)
+            VarSetCapacity(pt, 8, 0)
+            DllCall("ClientToScreen", "Ptr", hwnd, "Ptr", &pt)
+            Config.Game := { x: NumGet(pt, 0, "Int"), y: NumGet(pt, 4, "Int")
+                           , w: NumGet(rect, 8, "Int"), h: NumGet(rect, 12, "Int") }
+            Log("INIT", "Juego detectado: " . exe)
+            return
         }
     }
-
-    if (hwnd) {
-        ; Obtener posición y tamaño de la ventana
-        WinGetPos, wx, wy, ww, wh, % "ahk_id " . hwnd
-
-        ; Obtener el área cliente (sin bordes de ventana)
-        VarSetCapacity(rect, 16, 0)
-        DllCall("GetClientRect", "Ptr", hwnd, "Ptr", &rect)
-        clientW := NumGet(rect, 8, "Int")
-        clientH := NumGet(rect, 12, "Int")
-
-        ; Obtener offset del área cliente respecto a la ventana
-        VarSetCapacity(point, 8, 0)
-        DllCall("ClientToScreen", "Ptr", hwnd, "Ptr", &point)
-        clientX := NumGet(point, 0, "Int")
-        clientY := NumGet(point, 4, "Int")
-
-        Config.GameWindow := { x: clientX, y: clientY, w: clientW, h: clientH, exe: detectedExe }
-        Log("INFO", "Ventana del juego detectada (" . detectedExe . "): " . clientW . "x" . clientH . " en posición (" . clientX . "," . clientY . ")")
-    } else {
-        ; Si no se encuentra ninguna ventana, usar pantalla completa como fallback
-        Config.GameWindow := { x: 0, y: 0, w: A_ScreenWidth, h: A_ScreenHeight, exe: "ninguno" }
-
-        ; Construir lista de ejecutables buscados para el mensaje de log
-        exeList := ""
-        for index, exeName in Config.GameWindowExecutables {
-            exeList .= exeName
-            if (index < Config.GameWindowExecutables.Length())
-                exeList .= ", "
-        }
-
-        Log("WARN", "No se detectó la ventana del juego. Ejecutables buscados: " . exeList . " -> Usando pantalla completa como fallback")
-    }
+    Config.Game := { x: 0, y: 0, w: A_ScreenWidth, h: A_ScreenHeight }
+    Log("WARN", "Juego no detectado, usando pantalla completa")
 }
 
-; Ejecutar inicialización al cargar el script
 Init()
-
-; Registrar manejador de salida para saber por qué se cerró el script
 OnExit("OnExitHandler")
 
 ; ============================
-;  Hotkey de activación
+;  Hotkeys
 ; ============================
-F9::
-    ToggleAutomation()
-return
+F9::ToggleScript()
+F10::ExitScript()
 
-ToggleAutomation() {
+ToggleScript() {
     global Config, State
-    State.toggle := !State.toggle
-    if (State.toggle) {
-        Log("INFO", "Toggle ON -> Iniciando timer (" . Config.TimerInterval . " ms)")
-        Click, left
-        State.lastCastAttempt := A_TickCount
-        SetTimer, CheckPixels, % Config.TimerInterval
+    State.active := !State.active
+    if (State.active) {
+        Log("TOGGLE", "Script ACTIVADO")
+        CastRod()
+        SetTimer, MainLoop, % Config.TimerInterval
     } else {
-        Log("INFO", "Toggle OFF -> Deteniendo timer y liberando estado")
-        SetTimer, CheckPixels, Off
-        SafeReleaseAll()
-        State.lastCastAttempt := 0
+        Log("TOGGLE", "Script DESACTIVADO")
+        SetTimer, MainLoop, Off
+        CleanupState()
     }
 }
 
+ExitScript() {
+    Log("EXIT", "Cerrando script (F10)")
+    SetTimer, MainLoop, Off
+    CleanupState()
+    ExitApp
+}
+
 ; ============================
-;  Bucle principal (timer)
+;  Bucle Principal
 ; ============================
-CheckPixels:
-    CheckPixelsLogic()
+MainLoop:
+    ProcessFishing()
 return
 
-CheckPixelsLogic() {
+ProcessFishing() {
     global Config, State
 
-    ; -- Leer colores actuales en puntos clave
-    startRead  := GetColorAtPoint(Config.Points.centerHold)
-    finishRead := GetColorAtPoint(Config.Points.finish)
-    resetRead  := GetColorAtPoint(Config.Points.resetCheck)
-
-    ; -- 0) Detectar popup de recompensa mensual y cerrarlo
-    rewardLeftColor := GetColorAtPoint(Config.Points.rewardLeft)
-    rewardRightColor := GetColorAtPoint(Config.Points.rewardRight)
-    if (ColorCloseEnough(rewardLeftColor, Config.Colors.rewardBorder, Config.Tolerance.primary)
-        && ColorCloseEnough(rewardRightColor, Config.Colors.rewardBorder, Config.Tolerance.primary)) {
-        Log("INFO", "Popup de recompensa mensual detectado -> Cerrando")
-        ClickAt("rewardClose")
-        Sleep, % Config.Timings.rewardPopupWait
-        Log("INFO", "Popup de recompensa cerrado")
+    ; 1) Verificar caña rota (prioridad máxima)
+    if (CheckColor("resetCheck", Config.Colors.reset)) {
+        HandleBrokenRod()
         return
     }
 
-    ; -- 1) Flujo de reinicio si detecta el color de reset
-    if (ColorCloseEnough(resetRead, Config.Colors.reset, Config.Tolerance.primary)) {
-        Log("INFO", "RESET detectado -> Iniciando flujo de reinicio")
-        if (State.holding)
-            ReleaseHoldAt("centerHold")
-
-        ; Resetear TODOS los estados relacionados con holding/timeout
-        State.holding := false
-        State.holdStart := 0
-        State.tensionReleasing := false
-        State.tensionReleaseStart := 0
-        ReleaseKeyIfAny()
-
-        Sleep, % Config.Timings.resetMenuOpen
-        Send, m
-        Sleep, % Config.Timings.resetMenuWait
-        MoveMouseTo("menuConfirm1")
-        Click, left
-        Sleep, % Config.Timings.resetMenuConfirm
-        Click, left
-
-        RestoreMousePosition()
-        Log("INFO", "Flujo de reinicio completado")
+    ; 2) Si estamos pausados por tensión, esperar
+    if (State.tensionPause) {
+        if (A_TickCount - State.tensionStart >= Config.Timings.tensionRelease) {
+            ResumeAfterTension()
+        }
         return
     }
 
-    ; -- 2) Watchdog: si han pasado 30s sin pescar ningún pez, recoger y relanzar caña
-    if (!State.holding && State.lastCastAttempt && (A_TickCount - State.lastCastAttempt > Config.TimeoutMs)) {
-        Log("WARN", "Watchdog: 30s sin actividad de pesca -> recogiendo y relanzando caña")
-        SaveMousePositionOnce()
-        ClipCursorToGame()
-        MoveMouseTo("centerHold")
-        Sleep, % Config.Timings.clickDelay
-        ; Primero recoger (click derecho) para cancelar cualquier estado anterior
-        Click, right
-        Sleep, 500
-        ; Ahora lanzar de nuevo
-        Click, left
-        State.lastCastAttempt := A_TickCount
-        RestoreMousePosition()
-        ReleaseCursorClip()
+    ; 3) Si estamos pescando activamente
+    if (State.fishing) {
+        ; Verificar tensión al 100%
+        if (CheckColor("tensionBar", Config.Colors.tensionMax)) {
+            PauseTension()
+            return
+        }
+
+        ; Verificar si completamos la pesca
+        if (CheckColor("confirm", Config.Colors.finish)) {
+            HandleFishCaught()
+            return
+        }
+
+        ; Procesar minijuego de flechas
+        ProcessArrows()
+        return
     }
 
-    ; -- 3) Detectar primer píxel (empezar a mantener click = pica el pez)
-    if (!State.holding && ColorCloseEnough(startRead, Config.Colors.start, Config.Tolerance.primary)) {
-        SaveMousePositionOnce()
-        ClipCursorToGame()
-        MoveMouseTo("centerHold")
-        Sleep, % Config.Timings.clickDelay
-        Click, down, left
-
-        State.holding := true
-        State.holdStart := A_TickCount
-        State.lastCastAttempt := A_TickCount
-
-        Log("INFO", "START detectado -> Manteniendo click en centerHold")
+    ; 4) Esperando que pique un pez
+    if (CheckColor("center", Config.Colors.start)) {
+        StartFishing()
+        return
     }
 
-    ; -- 4) Detectar segundo píxel (soltar y confirmar = termina de pescar)
-    if (State.holding && ColorCloseEnough(finishRead, Config.Colors.finish, Config.Tolerance.primary)) {
-        MoveMouseTo("finish")
-        Sleep, % Config.Timings.clickDelay
+    ; 5) Watchdog: si pasa mucho tiempo sin actividad, relanzar
+    if (State.lastCast && (A_TickCount - State.lastCast > Config.WatchdogTimeout)) {
+        Log("WATCHDOG", "30s sin actividad -> Relanzando caña")
+        CastRod()
+    }
+}
+
+; ============================
+;  Acciones de Pesca
+; ============================
+CastRod() {
+    global Config, State
+    ClickPoint("center")
+    State.lastCast := A_TickCount
+    State.fishing := false
+    Log("CAST", "Caña lanzada")
+}
+
+StartFishing() {
+    global Config, State
+    MouseMove, % Config.Points.center.x, % Config.Points.center.y, 0
+    Sleep, % Config.Timings.clickDelay
+    Click, down, left
+    State.fishing := true
+    State.fishStart := A_TickCount
+    Log("FISH", "¡Pez detectado! Manteniendo click...")
+}
+
+HandleFishCaught() {
+    global Config, State
+    elapsed := Round((A_TickCount - State.fishStart) / 1000, 1)
+
+    ; Soltar click
+    Click, up, left
+    ReleaseKey()
+    State.fishing := false
+
+    Log("SUCCESS", "Pez capturado en " . elapsed . "s -> Esperando botón continuar...")
+
+    ; Esperar y pulsar botón continuar
+    Sleep, % Config.Timings.afterFinish
+    ClickPoint("confirm")
+    Log("ACTION", "Botón continuar pulsado")
+
+    ; Esperar y relanzar
+    Sleep, % Config.Timings.afterContinue
+    CastRod()
+}
+
+HandleFishLost() {
+    global Config, State
+    Click, up, left
+    ReleaseKey()
+    State.fishing := false
+
+    Log("FAIL", "Pesca fallida -> Esperando " . (Config.Timings.afterFail / 1000) . "s antes de relanzar")
+    Sleep, % Config.Timings.afterFail
+    CastRod()
+}
+
+HandleBrokenRod() {
+    global Config, State
+
+    ; Limpiar estado
+    if (State.fishing) {
         Click, up, left
-        State.holding := false
-        State.holdStart := 0
-
-        ReleaseKeyIfAny()
-
-        ; Confirmaciones posteriores
-        Sleep, % Config.Timings.finishBeforeConfirm
-        ClickAt("finish")
-        Sleep, % Config.Timings.finishBetweenClicks
-        ClickAt("finish")
-
-        State.lastCastAttempt := A_TickCount
-        RestoreMousePosition()
-        ReleaseCursorClip()
-
-        Log("INFO", "FINISH detectado -> Soltado y confirmaciones enviadas")
+        ReleaseKey()
+        State.fishing := false
     }
 
-    ; -- 5) Timeout de seguridad si no aparece el segundo píxel
-    if (State.holding && (A_TickCount - State.holdStart > Config.TimeoutMs)) {
-        ReleaseHoldAt("centerHold")
-        State.holding := false
-        elapsed := A_TickCount - State.holdStart
-        State.holdStart := 0
+    Log("RESET", "Caña rota detectada -> Abriendo menú para cambiar")
 
-        ReleaseKeyIfAny()
+    Sleep, 500
+    Send, m
+    Sleep, % Config.Timings.resetMenuWait
+    ClickPoint("menuBtn")
+    Sleep, 1500
+    ClickPoint("menuBtn")
+    Sleep, 500
 
-        ; Antes de recastear, verificar si hay botón "continuar pescando"
-        Log("WARN", "TIMEOUT sin FINISH tras " . elapsed . " ms -> Verificando botón continuar")
-        Sleep, % Config.Timings.continueCheckDelay
+    Log("RESET", "Caña cambiada -> Relanzando")
+    CastRod()
+}
 
-        ; Intentar detectar el botón varias veces (hasta 3 intentos)
-        continueDetected := false
-        Loop, 10 {
-            continueColor := GetColorAtPoint(Config.Points.continueFishing)
-            Log("DEBUG", "Intento " . A_Index . "/3 - Color detectado en continueFishing: " . Format("0x{:06X}", continueColor) . " | Esperado: 0xE8E8E8")
+; ============================
+;  Gestión de Tensión
+; ============================
+PauseTension() {
+    global Config, State
+    Click, up, left
+    State.tensionPause := true
+    State.tensionStart := A_TickCount
+    Log("TENSION", "Tensión al 100% -> Soltando click temporalmente")
+}
 
-            if (ColorCloseEnough(continueColor, Config.Colors.continueFishing, Config.Tolerance.primary)) {
-                continueDetected := true
-                break
-            }
-            Sleep, % Config.Timings.continueCheckDelay
-        }
+ResumeAfterTension() {
+    global Config, State
+    MouseMove, % Config.Points.center.x, % Config.Points.center.y, 0
+    Sleep, % Config.Timings.clickDelay
+    Click, down, left
+    State.tensionPause := false
+    State.fishing := true
+    Log("TENSION", "Tensión normalizada -> Reanudando pesca")
+}
 
-        if (continueDetected) {
-            Log("INFO", "Botón 'continuar pescando' detectado -> Esperando antes de pulsar")
-            Sleep, % Config.Timings.continueBeforeClick
-            Log("INFO", "Pulsando botón 'continuar pescando'")
-            ClickAt("continueFishing")
-            Sleep, % Config.Timings.finishBetweenClicks
-            Log("INFO", "Esperando tras pulsar 'continuar pescando' antes de lanzar caña")
-            Sleep, % Config.Timings.continueFishingWait
-            RestoreMousePosition()
-            return
-        }
+; ============================
+;  Minijuego de Flechas
+; ============================
+ProcessArrows() {
+    global Config, State
 
-        ; Si no hay botón continuar, hacer recast
-        Log("WARN", "No se detectó botón continuar después de 3 intentos -> Haciendo recast")
-        MoveMouseTo("centerHold")
-        Click, left
-        RestoreMousePosition()
-        ReleaseCursorClip()
-        Log("INFO", "Recast ejecutado -> El timer detectará START en próximos ciclos")
+    ; Detectar flecha D
+    if (CheckColorMulti("arrowD", Config.Colors.arrowD)) {
+        SetKey("d")
         return
     }
 
-    ; -- 6) Gestión de tensión al 100% (release temporal)
-    if (State.tensionReleasing) {
-        ; Esperando a que pase el tiempo de release para volver a pulsar
-        if (A_TickCount - State.tensionReleaseStart >= Config.Timings.tensionRelease) {
-            MoveMouseTo("centerHold")
-            Sleep, % Config.Timings.clickDelay
-            Click, down, left
-            State.holding := true
-            State.holdStart := A_TickCount
-            State.tensionReleasing := false
-            State.tensionReleaseStart := 0
-            Log("INFO", "Tensión normalizada -> Click reanudado tras release temporal")
-        }
+    ; Detectar flecha A
+    if (CheckColorMulti("arrowA", Config.Colors.arrowA)) {
+        SetKey("a")
+        return
     }
+}
 
-    ; -- 7) Detectar tensión al 100% mientras se mantiene el click
-    if (State.holding && !State.tensionReleasing) {
-        tensionColor := GetColorAtPoint(Config.Points.tensionBar)
-        if (ColorCloseEnough(tensionColor, Config.Colors.tensionMax, Config.Tolerance.primary)) {
-            Log("WARN", "Tensión al 100% detectada -> Soltando click temporalmente")
-            MoveMouseTo("centerHold")
-            Sleep, % Config.Timings.clickDelay
-            Click, up, left
-            State.holding := false
-            State.tensionReleasing := true
-            State.tensionReleaseStart := A_TickCount
-            return
-        }
-    }
+SetKey(key) {
+    global State
+    if (State.currentKey = key)
+        return
+    ReleaseKey()
+    Send, {%key% down}
+    State.currentKey := key
+    Log("ARROW", "Flecha " . key . " detectada -> Manteniendo tecla")
+}
 
-    ; -- 8) Minijuego de flechas
-    if (State.holding || State.tensionReleasing) {
-        colorA := GetColorAtPoint(Config.Points.arrowA)
-        colorD := GetColorAtPoint(Config.Points.arrowD)
-
-        ; Probar todos los colores posibles para flecha D
-        arrowDDetected := false
-        for index, targetColor in Config.Colors.arrowD {
-            if (ColorCloseEnough(colorD, targetColor, Config.Tolerance.arrow)) {
-                arrowDDetected := true
-                break
-            }
-        }
-
-        ; Probar todos los colores posibles para flecha A
-        arrowADetected := false
-        for index, targetColor in Config.Colors.arrowA {
-            if (ColorCloseEnough(colorA, targetColor, Config.Tolerance.arrow)) {
-                arrowADetected := true
-                break
-            }
-        }
-
-        if (arrowDDetected) {
-            SendKeyDown("d")
-        } else if (arrowADetected) {
-            SendKeyDown("a")
-        }
-        ; Si ninguna flecha está presente, se mantiene la tecla actual (si la hubiera)
+ReleaseKey() {
+    global State
+    if (State.currentKey) {
+        k := State.currentKey
+        Send, {%k% up}
+        State.currentKey := ""
     }
 }
 
 ; ============================
-;  Utilidades (globales)
+;  Utilidades
 ; ============================
-
-; Guarda la posición del ratón sólo una vez (si no se ha guardado).
-SaveMousePositionOnce() {
-    global State
-    if (State.origX = 0 && State.origY = 0) {
-        MouseGetPos, _x, _y
-        State.origX := _x
-        State.origY := _y
-        Log("DEBUG", "Posición original guardada: x=" . State.origX . ", y=" . State.origY)
-    }
-}
-
-; Restaura la posición del ratón si existe una almacenada.
-RestoreMousePosition() {
-    global State
-    if (State.origX || State.origY) {
-        MouseMove, % State.origX, % State.origY, 0
-        State.origX := 0
-        State.origY := 0
-        Log("DEBUG", "Posición del ratón restaurada")
-    }
-}
-
-; Mueve el ratón a un punto con nombre y hace clic si se requiere.
-MoveMouseTo(pointName) {
+ClickPoint(name) {
     global Config
-    pt := Config.Points[pointName]
+    pt := Config.Points[name]
     MouseMove, % pt.x, % pt.y, 0
-}
-
-ClickAt(pointName) {
-    MoveMouseTo(pointName)
+    Sleep, % Config.Timings.clickDelay
     Click, left
 }
 
-; Suelta el click en un punto determinado (por seguridad antes de soltar).
-ReleaseHoldAt(pointName) {
+CheckColor(pointName, targetColor) {
     global Config
-    MoveMouseTo(pointName)
-    Sleep, % Config.Timings.clickDelay
-    Click, up, left
-    Log("INFO", "Hold liberado en " . pointName)
+    pt := Config.Points[pointName]
+    PixelGetColor, c, % pt.x, % pt.y, RGB
+    return ColorMatch(c, targetColor, Config.Tolerance.primary)
 }
 
-; Envía una tecla en modo "down" y levanta la anterior si cambia.
-SendKeyDown(key) {
-    global State
-    if (State.currentKey != key) {
-        if (State.currentKey) {
-            prev := State.currentKey
-            Send, {%prev% up}
-            Log("INFO", "Tecla liberada: " . prev)
-        }
-        Send, {%key% down}
-        State.currentKey := key
-        Log("INFO", "Tecla presionada: " . key)
-    }
-}
-
-; Levanta cualquier tecla que esté siendo mantenida para el minijuego.
-ReleaseKeyIfAny() {
-    global State
-    if (State.currentKey) {
-        prev := State.currentKey      ; Usar variable temporal para Send
-        Send, {%prev% up}
-        State.currentKey := ""
-        Log("INFO", "Tecla liberada (limpieza): " . prev)
-    }
-}
-
-; Obtiene el color en un punto (objeto {x,y}). Devuelve 0xRRGGBB.
-GetColorAtPoint(pt) {
-    return GetColorAtXY(pt.x, pt.y)
-}
-
-GetColorAtXY(x, y) {
-    PixelGetColor, color, %x%, %y%, RGB
-    return color
-}
-
-; Comparación de colores con tolerancia por canal (R, G, B).
-ColorCloseEnough(color1, color2, tolerance := 10) {
-    c1r := (color1 >> 16)   & 0xFF
-    c1g := (color1 >> 8)    & 0xFF
-    c1b :=  color1          & 0xFF
-    c2r := (color2 >> 16)   & 0xFF
-    c2g := (color2 >> 8)    & 0xFF
-    c2b :=  color2          & 0xFF
-    return ( Abs(c1r - c2r) <= tolerance
-        && Abs(c1g - c2g) <= tolerance
-        && Abs(c1b - c2b) <= tolerance )
-}
-
-; Restringe el cursor dentro de la ventana del juego (evita clics accidentales fuera)
-ClipCursorToGame() {
+CheckColorMulti(pointName, colorArray) {
     global Config
-    ; Margen de seguridad de 10 píxeles para evitar bordes
-    margin := 10
-    left   := Config.GameWindow.x + margin
-    top    := Config.GameWindow.y + margin
-    right  := Config.GameWindow.x + Config.GameWindow.w - margin
-    bottom := Config.GameWindow.y + Config.GameWindow.h - margin
-
-    VarSetCapacity(rect, 16, 0)
-    NumPut(left,   rect, 0,  "Int")
-    NumPut(top,    rect, 4,  "Int")
-    NumPut(right,  rect, 8,  "Int")
-    NumPut(bottom, rect, 12, "Int")
-    DllCall("ClipCursor", "Ptr", &rect)
-    Log("DEBUG", "Cursor restringido a ventana del juego")
-}
-
-; Libera la restricción del cursor
-ReleaseCursorClip() {
-    DllCall("ClipCursor", "Ptr", 0)
-    Log("DEBUG", "Restricción de cursor liberada")
-}
-
-; Libera todos los recursos de estado al desactivar.
-SafeReleaseAll() {
-    global State
-    if (State.holding) {
-        ReleaseHoldAt("centerHold")
-        State.holding := false
-        Log("INFO", "SafeReleaseAll: hold activo liberado")
+    pt := Config.Points[pointName]
+    PixelGetColor, c, % pt.x, % pt.y, RGB
+    for i, target in colorArray {
+        if (ColorMatch(c, target, Config.Tolerance.arrow))
+            return true
     }
-    State.holdStart := 0
-    State.tensionReleasing := false
-    State.tensionReleaseStart := 0
-    ReleaseKeyIfAny()
-    RestoreMousePosition()
-    ReleaseCursorClip()
-    Log("INFO", "SafeReleaseAll: estado limpiado")
+    return false
 }
 
-F10::
-    Log("EXIT", "F10 presionado -> Saliendo")
-    SetTimer, CheckPixels, Off
-    SafeReleaseAll()
-ExitApp
-return
+ColorMatch(c1, c2, tol) {
+    return (Abs(((c1 >> 16) & 0xFF) - ((c2 >> 16) & 0xFF)) <= tol
+         && Abs(((c1 >> 8) & 0xFF) - ((c2 >> 8) & 0xFF)) <= tol
+         && Abs((c1 & 0xFF) - (c2 & 0xFF)) <= tol)
+}
+
+CleanupState() {
+    global State
+    if (State.fishing || State.tensionPause)
+        Click, up, left
+    ReleaseKey()
+    State.fishing := false
+    State.tensionPause := false
+    Log("CLEANUP", "Estado limpiado")
+}
 
 ; ============================
 ;  Sistema de Logs
 ; ============================
-
 Log(type, msg) {
     global Config
-    ; Si el logging está deshabilitado, no hacer nada
-    if (!Config.LoggingEnabled)
+    if (!Config.LogEnabled)
         return
-    ; Asegurar tipo en mayúsculas por consistencia
-    StringUpper, type, type
-    FormatTime, _date, , yy-MM-dd
-    FormatTime, _time, , HH:mm:ss
-    line := "[" . _date . "] [" . _time . "] [" . type . "] <" . msg . ">`r`n"
+    FormatTime, ts, , yyyy-MM-dd HH:mm:ss
+    line := "[" . ts . "] [" . type . "] " . msg . "`r`n"
     FileAppend, % line, % Config.LogPath, UTF-8
 }
 
 OnExitHandler(reason) {
-    Log("EXIT", "OnExit -> Razón=" . reason)
+    Log("EXIT", "Script cerrado: " . reason)
 }
