@@ -29,10 +29,12 @@ Init() {
     ; -- Intervalos
     Config.TimerInterval := 50
     Config.WatchdogTimeout := 30000            ; 30s sin pesca = relanzar
+    Config.FishingTimeout := 300000             ; 300s en minijuego = asumir pez perdido
+    Config.FishingInactivityTimeout := 60000    ; 60s sin actividad de minijuego = fallback
 
     ; -- Tolerancias de color
-    Config.Tolerance := { primary: 20, arrow: 15, fish: 30 }  ; fish más tolerante
-
+    Config.Tolerance := { primary: 20, arrow: 15, fish: 30, fishEscaped: 35 }  ; fishEscaped más tolerante
+    
     ; -- Tiempos de espera (ms)
     Config.Timings := {}
     Config.Timings.afterFail := 3000            ; Espera tras fallo antes de relanzar
@@ -53,17 +55,20 @@ Init() {
     Config.Colors := {}
     Config.Colors.start := 0xFF5501             ; Pez picando (mantener click)
     Config.Colors.finish := 0xE8E8E8            ; Pesca completada
-    Config.Colors.reset := 0x767C82             ; Caña rota (necesita reset)
+    Config.Colors.reset := 0x7A7A7A             ; Caña rota (necesita reset)
     Config.Colors.tensionMax := 0xFFFFFF        ; Barra tensión al 100%
     Config.Colors.fish := 0xDBDDDC              ; Color del pez (blanco)
     Config.Colors.arrowA := [0xFE6C06, 0xFAB916, 0xFF5601]
     Config.Colors.arrowD := [0xFF5A01, 0xFAB916, 0xFF5601]
-    Config.Colors.fishEscaped := 0xAABAD7       ; Pez escapado (pantalla de fallo)
+    Config.Colors.fishEscaped := [0x9FA5FE, 0xA9AEFF, 0x9398F2]  ; Tonos del mensaje de pez escapado
 
-    ; -- Área de búsqueda del pez (coordenadas base 1920x1080)
+    ; -- Área de búsqueda del pez
     Config.FishAreaBase := { x1: 0, y1: 400, x2: 1920, y2: 710 }
 
-    ; -- Punto de referencia de la caña (base 1920x1080)
+    ; -- Área de búsqueda de pez escapado
+    Config.FishEscapedAreaBase := { x1: 740, y1: 620, x2: 1685, y2: 740 }
+
+    ; -- Punto de referencia de la caña
     Config.RodRefBase := { x: 820, y: 700 }
     Config.FishDeadzone := 75                   ; Zona muerta: no mover si delta < 75px
 
@@ -79,7 +84,15 @@ Init() {
     Config.PointsBase.tensionBar := { x: 1248, y: 897 }  ; Barra tensión (extremo)
     Config.PointsBase.arrowA := { x: 851, y: 528 }
     Config.PointsBase.arrowD := { x: 1054, y: 536 }
-    Config.PointsBase.fishEscaped := { x: 1190, y: 720 }  ; Detector pez escapado
+    ; FishEscaped se usa ahora con área (CheckFishEscaped)
+
+    ; -- Logging (rotación diaria)
+    Config.LogEnabled := true
+    Config.LogDir := A_ScriptDir . "\logs"
+    Config.LogCurrentDate := ""
+    Config.LogPath := ""
+    if (!FileExist(Config.LogDir))
+        FileCreateDir, % Config.LogDir
 
     ; -- Detectar ventana del juego
     DetectGameWindow()
@@ -102,13 +115,15 @@ Init() {
                        , x2: Round(Config.FishAreaBase.x2 * Config.Scale.x) + Config.Game.x
                        , y2: Round(Config.FishAreaBase.y2 * Config.Scale.y) + Config.Game.y }
 
+    ; -- Área de búsqueda de pez escapado escalada
+    Config.FishEscapedArea := { x1: Round(Config.FishEscapedAreaBase.x1 * Config.Scale.x) + Config.Game.x
+                              , y1: Round(Config.FishEscapedAreaBase.y1 * Config.Scale.y) + Config.Game.y
+                              , x2: Round(Config.FishEscapedAreaBase.x2 * Config.Scale.x) + Config.Game.x
+                              , y2: Round(Config.FishEscapedAreaBase.y2 * Config.Scale.y) + Config.Game.y }
+
     ; -- Punto de referencia de la caña escalado
     Config.RodRef := { x: Round(Config.RodRefBase.x * Config.Scale.x) + Config.Game.x
                      , y: Round(Config.RodRefBase.y * Config.Scale.y) + Config.Game.y }
-
-    ; -- Logging
-    Config.LogEnabled := true
-    Config.LogPath := A_ScriptDir . "\AutoFishing.log"
 
     ; -- Estado inicial
     State.active := false
@@ -122,6 +137,7 @@ Init() {
     State.keyStart := 0             ; Timestamp cuando se activó la tecla
     State.arrowKey := ""            ; Última flecha detectada
     State.fishTrackEnd := 0         ; Timestamp cuando termina el cooldown del pez
+    State.lastFishingActivity := 0  ; Última actividad útil del minijuego
 
     Log("INIT", "Ventana: " . Config.Game.w . "x" . Config.Game.h . " @ (" . Config.Game.x . "," . Config.Game.y . ") | Escala: " . Round(Config.Scale.x, 2) . "x" . Round(Config.Scale.y, 2))
 }
@@ -186,8 +202,15 @@ ProcessFishing() {
     global Config, State
 
     ; 0) PRIORIDAD MÁXIMA: Verificar si el pez escapó (en cualquier momento)
-    if (State.fishing && CheckColor("fishEscaped", Config.Colors.fishEscaped)) {
-        HandleFishLost()
+    if (State.fishing && CheckFishEscaped()) {
+        HandleFishLost("mensaje")
+        return
+    }
+
+    ; 0.25) Fallback: si llevamos demasiado tiempo en combate, asumir pérdida
+    if (State.fishing && State.fishStart && (A_TickCount - State.fishStart > Config.FishingTimeout)) {
+        Log("TIMEOUT", "Combate > " . (Config.FishingTimeout / 1000) . "s -> Asumiendo pez perdido")
+        HandleFishLost("timeout", 0)
         return
     }
 
@@ -199,6 +222,7 @@ ProcessFishing() {
             } else {
                 State.keyStart := A_TickCount  ; Resetear tiempo si es la misma
             }
+            State.lastFishingActivity := A_TickCount
             return
         }
         if (CheckColorMulti("arrowA", Config.Colors.arrowA)) {
@@ -207,22 +231,17 @@ ProcessFishing() {
             } else {
                 State.keyStart := A_TickCount  ; Resetear tiempo si es la misma
             }
+            State.lastFishingActivity := A_TickCount
             return
         }
     }
 
-    ; 1) Verificar caña rota (prioridad máxima)
-    ;    Solo verificar si pasaron al menos 3s desde el último lanzamiento
-    timeSinceCast := A_TickCount - State.lastCast
-    if (timeSinceCast > Config.Timings.brokenRodCheckDelay && !State.fishing && CheckColor("resetCheck", Config.Colors.reset)) {
-        HandleBrokenRod()
-        return
-    }
+
 
     ; 2) Si estamos pausados por tensión, esperar
     if (State.tensionPause) {
         ; Verificar si el pez escapó durante la pausa
-        if (CheckColor("fishEscaped", Config.Colors.fishEscaped)) {
+        if (CheckFishEscaped()) {
             State.tensionPause := false
             HandleFishLost()
             return
@@ -255,11 +274,24 @@ ProcessFishing() {
         ; PRIORIDAD 1: Procesar flechas del minijuego (SIEMPRE verificar primero)
         arrowResult := ProcessArrows()
         if (arrowResult) {
+            State.lastFishingActivity := A_TickCount
             return
         }
 
         ; PRIORIDAD 2: Seguir al pez si no hay flechas
-        TrackFish()
+        fishTrackResult := TrackFish()
+        if (fishTrackResult) {
+            State.lastFishingActivity := A_TickCount
+            return
+        }
+
+        ; Fallback: sin flechas ni pez por mucho tiempo -> asumir escape
+        if (State.lastFishingActivity && (A_TickCount - State.lastFishingActivity > Config.FishingInactivityTimeout)) {
+            Log("TIMEOUT", "Sin actividad de minijuego por " . (Config.FishingInactivityTimeout / 1000) . "s -> Asumiendo pez perdido")
+            HandleFishLost("inactividad", 0)
+            return
+        }
+
         return
     }
 
@@ -281,9 +313,18 @@ ProcessFishing() {
 ; ============================
 CastRod() {
     global Config, State
+
+    ; Verificar si la caña está rota antes de lanzar
+    if (CheckColor("resetCheck", Config.Colors.reset)) {
+        HandleBrokenRod()
+        return
+    }
+
     ClickPoint("center")
     State.lastCast := A_TickCount
     State.fishing := false
+    State.fishStart := 0
+    State.lastFishingActivity := 0
     Log("CAST", "Caña lanzada")
 }
 
@@ -294,6 +335,7 @@ StartFishing() {
     Click, down, left
     State.fishing := true
     State.fishStart := A_TickCount
+    State.lastFishingActivity := A_TickCount
     Log("FISH", "¡Pez detectado! Manteniendo click...")
 }
 
@@ -305,9 +347,11 @@ HandleFishCaught() {
     Click, up, left
     ReleaseKey()
     State.fishing := false
+    State.fishStart := 0
     State.keySource := ""
     State.arrowKey := ""
     State.fishTrackEnd := 0
+    State.lastFishingActivity := 0
 
     Log("SUCCESS", "Pez capturado en " . elapsed . "s -> Esperando botón continuar...")
 
@@ -321,17 +365,24 @@ HandleFishCaught() {
     CastRod()
 }
 
-HandleFishLost() {
+HandleFishLost(reason := "deteccion", waitMs := "") {
     global Config, State
+
+    if (waitMs = "")
+        waitMs := Config.Timings.afterFail
+
     Click, up, left
     ReleaseKey()
     State.fishing := false
+    State.fishStart := 0
     State.keySource := ""
     State.arrowKey := ""
     State.fishTrackEnd := 0
+    State.lastFishingActivity := 0
 
-    Log("ESCAPED", "Pez escapado detectado -> Esperando " . (Config.Timings.afterFail / 1000) . "s antes de relanzar")
-    Sleep, % Config.Timings.afterFail
+    Log("ESCAPED", "Pez perdido (" . reason . ") -> Esperando " . (waitMs / 1000) . "s antes de relanzar")
+    if (waitMs > 0)
+        Sleep, % waitMs
     CastRod()
 }
 
@@ -344,6 +395,8 @@ HandleBrokenRod() {
         ReleaseKey()
         State.fishing := false
     }
+    State.fishStart := 0
+    State.lastFishingActivity := 0
 
     Log("RESET", "Caña rota detectada -> Abriendo menú para cambiar")
 
@@ -377,6 +430,7 @@ ResumeAfterTension() {
     Click, down, left
     State.tensionPause := false
     State.fishing := true
+    State.lastFishingActivity := A_TickCount
     Log("TENSION", "Tensión normalizada -> Reanudando pesca")
 }
 
@@ -387,7 +441,7 @@ ProcessArrows() {
     global Config, State
 
     ; Verificar si el pez escapó antes de procesar flechas
-    if (CheckColor("fishEscaped", Config.Colors.fishEscaped)) {
+    if (CheckFishEscaped()) {
         return false  ; Dejar que ProcessFishing maneje el escape
     }
 
@@ -462,7 +516,7 @@ TrackFish() {
     global Config, State
 
     ; Verificar si el pez escapó antes de seguirlo
-    if (CheckColor("fishEscaped", Config.Colors.fishEscaped)) {
+    if (CheckFishEscaped()) {
         return false  ; Dejar que ProcessFishing maneje el escape
     }
 
@@ -546,6 +600,20 @@ ClickPoint(name) {
     Click, left
 }
 
+CheckFishEscaped() {
+    global Config
+    colors := Config.Colors.fishEscaped
+    if (!IsObject(colors))
+        colors := [colors]
+
+    for i, targetColor in colors {
+        PixelSearch, fx, fy, % Config.FishEscapedArea.x1, % Config.FishEscapedArea.y1, % Config.FishEscapedArea.x2, % Config.FishEscapedArea.y2, % targetColor, % Config.Tolerance.fishEscaped, Fast RGB
+        if (ErrorLevel = 0)
+            return true
+    }
+    return false
+}
+
 CheckColor(pointName, targetColor) {
     global Config
     pt := Config.Points[pointName]
@@ -576,10 +644,12 @@ CleanupState() {
         Click, up, left
     ReleaseKey()
     State.fishing := false
+    State.fishStart := 0
     State.tensionPause := false
     State.keySource := ""
     State.arrowKey := ""
     State.fishTrackEnd := 0
+    State.lastFishingActivity := 0
     Log("CLEANUP", "Estado limpiado")
 }
 
@@ -590,6 +660,13 @@ Log(type, msg) {
     global Config
     if (!Config.LogEnabled)
         return
+
+    FormatTime, logDate, , yyyy-MM-dd
+    if (Config.LogCurrentDate != logDate) {
+        Config.LogCurrentDate := logDate
+        Config.LogPath := Config.LogDir . "\AutoFishing_" . logDate . ".log"
+    }
+
     FormatTime, ts, , yyyy-MM-dd HH:mm:ss
     line := "[" . ts . "] [" . type . "] " . msg . "`r`n"
     FileAppend, % line, % Config.LogPath, UTF-8
