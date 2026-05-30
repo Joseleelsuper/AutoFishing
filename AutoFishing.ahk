@@ -93,18 +93,18 @@ Init() {
     Config.Points := {}
     for key, pt in Config.PointsBase {
         Config.Points[key] := { x: Round(pt.x * Config.Scale.x) + Config.Game.x
-                              , y: Round(pt.y * Config.Scale.y) + Config.Game.y }
+            , y: Round(pt.y * Config.Scale.y) + Config.Game.y }
     }
 
     ; -- Área de búsqueda del pez escalada
     Config.FishArea := { x1: Round(Config.FishAreaBase.x1 * Config.Scale.x) + Config.Game.x
-                       , y1: Round(Config.FishAreaBase.y1 * Config.Scale.y) + Config.Game.y
-                       , x2: Round(Config.FishAreaBase.x2 * Config.Scale.x) + Config.Game.x
-                       , y2: Round(Config.FishAreaBase.y2 * Config.Scale.y) + Config.Game.y }
+        , y1: Round(Config.FishAreaBase.y1 * Config.Scale.y) + Config.Game.y
+        , x2: Round(Config.FishAreaBase.x2 * Config.Scale.x) + Config.Game.x
+        , y2: Round(Config.FishAreaBase.y2 * Config.Scale.y) + Config.Game.y }
 
     ; -- Punto de referencia de la caña escalado
     Config.RodRef := { x: Round(Config.RodRefBase.x * Config.Scale.x) + Config.Game.x
-                     , y: Round(Config.RodRefBase.y * Config.Scale.y) + Config.Game.y }
+        , y: Round(Config.RodRefBase.y * Config.Scale.y) + Config.Game.y }
 
     ; -- Logging
     Config.LogEnabled := true
@@ -136,7 +136,7 @@ DetectGameWindow() {
             VarSetCapacity(pt, 8, 0)
             DllCall("ClientToScreen", "Ptr", hwnd, "Ptr", &pt)
             Config.Game := { x: NumGet(pt, 0, "Int"), y: NumGet(pt, 4, "Int")
-                           , w: NumGet(rect, 8, "Int"), h: NumGet(rect, 12, "Int") }
+                , w: NumGet(rect, 8, "Int"), h: NumGet(rect, 12, "Int") }
             Log("INIT", "Juego detectado: " . exe)
             return
         }
@@ -566,8 +566,8 @@ CheckColorMulti(pointName, colorArray) {
 
 ColorMatch(c1, c2, tol) {
     return (Abs(((c1 >> 16) & 0xFF) - ((c2 >> 16) & 0xFF)) <= tol
-         && Abs(((c1 >> 8) & 0xFF) - ((c2 >> 8) & 0xFF)) <= tol
-         && Abs((c1 & 0xFF) - (c2 & 0xFF)) <= tol)
+        && Abs(((c1 >> 8) & 0xFF) - ((c2 >> 8) & 0xFF)) <= tol
+        && Abs((c1 & 0xFF) - (c2 & 0xFF)) <= tol)
 }
 
 CleanupState() {
