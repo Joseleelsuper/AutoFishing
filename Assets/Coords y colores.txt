@@ -1,0 +1,31 @@
+## Cambiar Baits:
+Pulsar N si en la posición (1385, 1025) está un color grisáceo (#787F86)
+
+Se cambiará el bait si se puede hacer clic en el botón (1395, 620) con el color #E8E8E8, en caso contrario no hay más baits disponibles.
+
+## Cambiar Rods:
+
+Pulsar M si en la posición (1660, 1025) está un color grisáceo (#787F86)
+
+
+Se cambiará el bait si se puede hacer clic en el botón (1655, 620) con el color #E8E8E8, en caso contrario no hay más baits disponibles.
+
+## Posición del Pez
+
+El pez suele ser visible gracias a que tiene el color #F2F7F1 para visualizarlo.
+
+## Pez encontrado
+
+Antes de comenzar a pescar el pez, aparece un símbolo de exclamación en las posiciones (970, 475) y (955, 560) con los colores #FFC414 y #FF4100 respectivamente.
+
+## Pez perdido
+
+Aparece un mensaje de que se ha escapado del color #D2E6FF.
+
+Está alrededor de la posición (1123, 680)
+
+## Pantalla de continuar
+
+Después de pescar el pez con éxito, se debe clicar en el botón de continuar, en la posición (1605, 970) con color #E8E8E8
+
+Antes de esta pantalla, también aparece un mensaje de "Pez capturado", de la misma forma que ocurre con el pez perdido, pero con los colores #E09B16 y #FCEE8D
