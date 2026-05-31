@@ -1,8 +1,8 @@
-# AutoFishing
+# BPSR-AutoFishing
 
-AutoFishing es un script de AutoHotkey v1 para automatizar la pesca en un juego mediante detección de píxeles y control de ratón/teclado.
+AutoFishing es un script de para automatizar la pesca en el juego mediante deteccion de pixeles y control de raton/teclado.
 
-## Uso básico
+## Uso basico
 
 Para ejecutarlo, simplemente descargas el .exe y lo abres.
 
@@ -14,7 +14,7 @@ Tiene soporte para cambiar la caña automáticamente, pero es necesario tener ce
 
 Podéis descargar la última versión aquí: https://github.com/Joseleelsuper/AutoFishing/releases/latest
 
-Para ejecutar el fichero .ahk necesitarás tener instalado [AutoHotkey v1.1.37.02](https://github.com/AutoHotkey/AutoHotkey/releases/tag/v1.1.37.02)
+Para ejecutar el fichero .ahk necesitarás tener instalado [AutoHotkey v2.0.19](https://github.com/AutoHotkey/AutoHotkey/releases/tag/v2.0.19)
 
 ## Licencia
 

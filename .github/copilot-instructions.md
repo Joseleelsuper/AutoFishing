@@ -1,61 +1,55 @@
-## Guía para agentes de IA en este repo (AutoFishing)
+## Guia para agentes de IA en este repo (AutoFishing)
 
-Este proyecto es un script de AutoHotkey v1 para automatizar la pesca de un juego vía detección de píxeles y control de ratón/teclado. Mantén estas pautas para ser productivo desde el primer minuto y no romper el flujo actual.
+Este proyecto es un script de AutoHotkey v2.0.19 para automatizar la pesca del juego mediante deteccion de pixeles y control de raton/teclado.
 
-### Visión general y arquitectura
-- Lenguaje/Runtime: AutoHotkey v1 (no v2). El código usa comandos legacy (SetTimer con etiqueta, Click, Send), objetos AHK v1 y hotkeys F9/F10.
+### Vision general y arquitectura
+
+- Runtime: AutoHotkey v2.0.19. No introducir sintaxis v1.
 - Archivo principal: `AutoFishing.ahk`.
 - Estructura:
-	- `Config` (global): parámetros base (resolución de referencia 1920x1080), tolerancias, colores, puntos base, escala por pantalla, timings centralizados, logging.
-	- `Config.Timings`: todos los `Sleep` centralizados (clickDelay, resetMenuOpen, finishBeforeConfirm, tensionRelease, etc.) para fácil ajuste sin tocar la lógica.
-	- `State` (global): flags de ejecución (toggle, holding, tensionReleasing), tiempos (holdStart, tensionReleaseStart), posición original del ratón, tecla activa del minijuego.
-	- `Init()`: calcula `Config.Scale` con la resolución actual y precalcula `Config.Points` escalados desde `Config.PointsBase` (x,y por punto en 1920x1080).
-	- Bucle: `SetTimer` llama `CheckPixelsLogic()` cada `Config.TimerInterval` ms.
-	- Flujo en `CheckPixelsLogic()` (orden): RESET → START (mantener click) → FINISH (soltar y confirmar) → TIMEOUT de seguridad (verifica botón "continuar pescando" antes de recast) → gestión de tensión 100% (release temporal) → minijuego de flechas (A/D).
-	- Logging: `Log(type, msg)` a `AutoFishing.log` (en el mismo directorio), activable con `Config.LoggingEnabled`.
+  - `BuildConfig()`: define colores, puntos base `1920x1080`, areas de busqueda, tolerancias, timings, ejecutables del juego y logging.
+  - `Initialize()`: detecta la ventana del juego, calcula escala y falla con aviso si la ventana no existe.
+  - `State.status`: estados explicitos `idle`, `waitingBite`, `fishing`, `tensionRelease`, `recoveringResource`, `stopped`.
+  - `ProcessFishing()`: timer v2 con funcion, no labels.
+  - Helpers de entrada/salida: `SafeReleaseAll()`, `ReleaseKey()`, `ClickPoint()`, `MoveToPoint()`.
+  - Helpers visuales: `CheckPointColor()`, `CheckPointAnyColor()`, `SearchAreaForColor()`, `ColorMatch()`.
 
 ### Atajos y controles
-- F9: activar/desactivar automatización (inicia/detiene timer). F10: salida segura (libera estado, apaga timer y cierra).
-- El script guarda/restaura la posición del ratón con `SaveMousePositionOnce()`/`RestoreMousePosition()` para minimizar impacto al usuario.
 
-### Flujos y patrones clave del proyecto
-- Detección por color: siempre con `ColorCloseEnough(actual, objetivo, toleranciaPorCanal)`. Tolerancias:
-	- `Config.Tolerance.primary` para START/FINISH/RESET/continueFishing/tensionMax.
-	- `Config.Tolerance.arrow` para flechas A/D.
-- Coordenadas: declara en `Config.PointsBase` (en 1920x1080) y deja que `Init()` genere `Config.Points` escalados. Evita usar coordenadas absolutas directas en el flujo.
-- Botón "continuar pescando": tras TIMEOUT, antes de recastear, el script verifica si hay botón de continuar (suele aparecer cuando el pez se escapa). Si se detecta, se pulsa; si no, se procede al recast.
-- Recast simple: tras timeout sin botón continuar, el script hace UN click de recast y deja que el timer principal siga detectando START normalmente. **No usar bucles bloqueantes** que impidan al timer funcionar.
-- Gestión de tensión 100%: detecta cuando la barra de tensión (blanco puro 0xFFFFFF) alcanza el 100%. Al detectarlo, suelta el click temporalmente durante `Config.Timings.tensionRelease` (1000ms por defecto) y luego lo vuelve a pulsar automáticamente. Usa `State.tensionReleasing` para controlar este estado temporal.
-- Minijuego: usa `SendKeyDown("a"|"d")` y `ReleaseKeyIfAny()` para garantizar que solo una tecla esté pulsada a la vez.
-- Timings: todos los `Sleep` están en `Config.Timings` (clickDelay, resetMenuOpen, finishBeforeConfirm, continueCheckDelay, tensionRelease, etc.). Modifica ahí para ajustar velocidades sin tocar lógica.
+- `F9`: activa/desactiva la automatizacion.
+- `F10`: libera click/teclas, detiene timer y cierra.
+- Cualquier salida fatal debe llamar a `FatalStop()` para liberar controles, registrar en `AutoFishing.log`, mostrar `MsgBox` y terminar.
 
-### Ejemplos concretos (cómo extender sin romper)
-- Añadir un nuevo punto/color a detectar:
-	1) En `Init()`: agrega `Config.Colors.miEvento := 0xRRGGBB` y `Config.PointsBase.miEvento := { x: ..., y: ... }` (en base 1920x1080).
-	2) Usa en `CheckPixelsLogic()`:
-		 - `miColor := GetColorAtPoint(Config.Points.miEvento)`
-		 - `if (ColorCloseEnough(miColor, Config.Colors.miEvento, Config.Tolerance.primary)) { ... }`
-	3) Si acciones implican teclas, llama `SendKeyDown()`/`ReleaseKeyIfAny()`; si implican clicks, utiliza `MoveMouseTo()` y `Click` y restaura el ratón luego.
-- Ajustar tolerancias cuando haya falsos positivos/negativos: incrementa/decrementa `Config.Tolerance.*` en pasos pequeños (2–5). Recuerda que la tolerancia es por canal RGB.
+### Flujo principal
 
-### Workflows de desarrollo
-- Ejecutar el script: abre con AutoHotkey v1 en Windows y usa F9/F10 para controlar. Para diagnósticos, habilita `Config.LoggingEnabled := true` y lee `AutoFishing.log`.
-- Compilar a EXE (opcional): usa Ahk2Exe para obtener `AutoFishing.exe`. Luego ejecuta `generateHash.ps1` para actualizar `hash.txt` con el SHA-256 del EXE.
-	- Script: `generateHash.ps1` contiene `(Get-FileHash -Algorithm SHA256 AutoFishing.exe).Hash > hash.txt`.
+- `StartCycle()` valida recursos y lanza la cana.
+- Si falta bait, `RecoverResource("bait")` abre menu con `N`, verifica el boton `Use` y selecciona cebo.
+- Si falta rod, `RecoverResource("rod")` abre menu con `M`, verifica el boton `Use` y selecciona cana.
+- Si no hay boton `Use`, el script termina con aviso; no debe hacer clicks ciegos.
+- En `waitingBite`, el script espera el indicador compuesto de pez encontrado.
+- Comprobar cada 3s si el boton `Continue fishing` esta visible por color blanco en su punto; si aparece, pulsarlo y relanzar.
+- En `fishing`, el orden de prioridad restante es: pez perdido, texto `Caught it!`, tension peligrosa, flechas A/D, seguimiento del pez.
+- La tension peligrosa suelta click temporalmente y reanuda despues de `Config.Timings.tensionRelease`.
 
-### Convenciones y decisiones importantes
-- Mantener v1: no migrar a AHK v2 ni mezclar estilos (las etiquetas/timers y `Send,` son v1).
-- Escalado por pantalla: `Config.Scale.x` y `.y` se calculan independientemente. Las posiciones base deben definirse en 1920x1080.
-- No bloquear el timer: evita bucles/esperas largas en `CheckPixelsLogic()`. Usa `Sleep` cortos y helpers existentes (p. ej., `WaitForStartPixel()` para sondeo con pausa).
-- Timings centralizados: NUNCA usar `Sleep` con valores literales en la lógica; todos deben referir a `Config.Timings.*` para facilitar ajuste.
-- Limpieza de estado: antes de salir o desactivar, llama a `SafeReleaseAll()` (libera click, suelta teclas, restaura ratón).
+### Convenciones
 
-### Precauciones (lo que suele fallar)
-- Permisos: si el juego corre elevado, ejecuta AHK como administrador para que `PixelGetColor` funcione.
-- Variaciones de color/post-procesado/HDR: si los colores no coinciden, ajusta tolerancias y considera desactivar filtros del juego o usar modo fullscreen/borderless consistente.
-- DPI/escala de Windows: el script usa coordenadas de pantalla; mantener la referencia de 1920x1080 y el escalado interno minimiza problemas, pero puntos/colores pueden requerir reajuste si cambia la UI del juego.
+- Mantener coordenadas en `Config.PointsBase` o `Config.AreasBase` usando referencia `1920x1080`; no usar coordenadas absolutas directas en la logica.
+- Mantener colores como enteros RGB `0xRRGGBB`.
+- Mantener tolerancias centralizadas en `Config.Tolerance`.
+- Mantener sleeps centralizados en `Config.Timings`.
+- Usar `SetTimer(ProcessFishing, intervalo)` y `SetTimer(ProcessFishing, 0)`.
+- Usar `PixelGetColor(x, y)`, `PixelSearch(&x, &y, ...)`, `Click("Down"/"Up"/"Left")`, `Send("{a down}")` y `Buffer()`/`NumGet()` para llamadas Win32.
 
-### Archivos relevantes
-- `AutoFishing.ahk`: lógica completa (config, timer, flujos, utilidades, logs).
-- `generateHash.ps1`: genera `hash.txt` con hash SHA-256 del EXE compilado.
-- `hash.txt`: salida de hash publicada.
+### Validacion
+
+- Ejecutar con AutoHotkey v2.0.19:
+  - `AutoHotkey.exe /ErrorStdOut AutoFishing.ahk`
+- Revisar que no haya restos v1:
+  - `rg "SetTimer,|PixelSearch,|PixelGetColor,|ErrorLevel|MainLoop:|WinGet|VarSetCapacity" AutoFishing.ahk`
+- Probar manualmente F9/F10, captura, perdida, tension, cambio de bait, cambio de cana y finalizacion sin recursos.
+
+### Precauciones
+
+- Si el juego corre como administrador, AutoHotkey tambien debe ejecutarse como administrador para que pixeles y entradas funcionen correctamente.
+- HDR, filtros graficos o cambios de UI pueden requerir ajustar tolerancias o puntos.
+- Los assets en `Assets/` son referencia de calibracion; no convertir el flujo a `ImageSearch` salvo que se decida explicitamente.
