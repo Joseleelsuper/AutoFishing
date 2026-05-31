@@ -5,8 +5,9 @@
 ;  AutoFishing
 ; ----------------------------------------------
 ;   @description: Automatiza la pesca mediante deteccion de pixeles
-;   @author: Haru, Joseleelsuper
+;   @author: Joseleelsuper, Haru
 ;   @controls: F9 = Toggle ON/OFF | F10 = Salir
+;   @version: 3.0.0
 ; ==============================================
 
 SendMode("Input")
@@ -33,7 +34,7 @@ BuildConfig() {
 
     cfg.Base := { w: 1920, h: 1080 }
     cfg.TimerInterval := 50
-    cfg.WatchdogTimeout := 60000
+    cfg.BiteTimeout := 60000
     cfg.NoArrowTimeout := 30000
     cfg.ResourceCheckDelay := 3000
     cfg.ContinueCheckInterval := 2000
@@ -43,7 +44,6 @@ BuildConfig() {
     cfg.LogPath := A_ScriptDir "\AutoFishing.log"
 
     cfg.Tolerance := {}
-    cfg.Tolerance.primary := 20
     cfg.Tolerance.event := 25
     cfg.Tolerance.resource := 20
     cfg.Tolerance.button := 20
@@ -102,6 +102,12 @@ BuildConfig() {
     cfg.AreasBase["fish"] := { x1: 0, y1: 400, x2: 1920, y2: 710 }
     cfg.AreasBase["caughtText"] := { x1: 740, y1: 620, x2: 1080, y2: 735 }
 
+    cfg.Resources := Map()
+    cfg.Resources["bait"] := { menuKey: "n", usePoint: "baitUse", missingIndicator: "baitMissingIndicator",
+        name: "cebo", missingMessage: "No hay cebos disponibles. AutoFishing se detendra." }
+    cfg.Resources["rod"] := { menuKey: "m", usePoint: "rodUse", missingIndicator: "rodMissingIndicator",
+        name: "cana", missingMessage: "No hay cañas disponibles. AutoFishing se detendra." }
+
     cfg.RodRefBase := { x: 820, y: 700 }
     cfg.FishDeadzone := 75
 
@@ -122,7 +128,6 @@ BuildState() {
     st.keyStart := 0
     st.arrowKey := ""
     st.fishTrackCooldownUntil := 0
-    st.holdingClick := false
     st.inTimer := false
     return st
 }
@@ -269,7 +274,7 @@ ProcessFishing() {
 }
 
 ProcessFishingTick() {
-    global Config, State
+    global State
 
     if ShouldCheckContinueButton() && IsContinueButtonVisible() {
         HandleContinueButton()
@@ -277,82 +282,104 @@ ProcessFishingTick() {
     }
 
     if State.status = "tensionRelease" {
-        if IsFishLost() {
-            HandleFishLost()
-            return
-        }
-
-        if IsFishCaught() {
-            HandleFishCaught()
-            return
-        }
-
-        arrowHandled := ProcessArrows()
-
-        if HasNoArrowTimedOut() {
-            Log("WATCHDOG", "30s sin detectar flechas; suponiendo pez perdido")
-            HandleFishLost()
-            return
-        }
-
-        if !arrowHandled {
-            TrackFish()
-        }
-
-        if (A_TickCount - State.tensionStart >= Config.Timings.tensionRelease) {
-            ResumeAfterTension()
-        }
+        ProcessTensionRelease()
         return
     }
 
     if State.status = "fishing" {
-        if IsFishLost() {
-            HandleFishLost()
-            return
-        }
-
-        if IsFishCaught() {
-            HandleFishCaught()
-            return
-        }
-
-        if IsTensionDanger() {
-            PauseForTension()
-            return
-        }
-
-        if ProcessArrows() {
-            return
-        }
-
-        if HasNoArrowTimedOut() {
-            Log("WATCHDOG", "30s sin detectar flechas; suponiendo pez perdido")
-            HandleFishLost()
-            return
-        }
-
-        TrackFish()
+        ProcessFishingMinigame()
         return
     }
 
     if State.status = "waitingBite" {
-        if IsFishSpotted() {
-            StartFishing()
-            return
-        }
-
-        if (A_TickCount - State.lastCast > Config.ResourceCheckDelay) {
-            if IsResourceEmpty("bait") || IsResourceEmpty("rod") {
-                StartCycle()
-                return
-            }
-        }
-
-        if (State.lastCast && A_TickCount - State.lastCast > Config.WatchdogTimeout) {
-            Log("WATCHDOG", "60s sin iniciar minijuego tras lanzar; relanzando")
-            StartCycle()
-        }
+        ProcessWaitingBite()
     }
+}
+
+ProcessTensionRelease() {
+    global Config, State
+
+    if HandleFishingOutcome() {
+        return
+    }
+
+    arrowHandled := ProcessArrows()
+
+    if HandleNoArrowTimeout() {
+        return
+    }
+
+    if !arrowHandled {
+        TrackFish()
+    }
+
+    if HasTimedOut(State.tensionStart, Config.Timings.tensionRelease) {
+        ResumeAfterTension()
+    }
+}
+
+ProcessFishingMinigame() {
+    if HandleFishingOutcome() {
+        return
+    }
+
+    if IsTensionDanger() {
+        PauseForTension()
+        return
+    }
+
+    if ProcessArrows() {
+        return
+    }
+
+    if HandleNoArrowTimeout() {
+        return
+    }
+
+    TrackFish()
+}
+
+ProcessWaitingBite() {
+    global Config, State
+
+    if IsFishSpotted() {
+        StartFishing()
+        return
+    }
+
+    if HasTimedOut(State.lastCast, Config.ResourceCheckDelay) && HasEmptyResource() {
+        StartCycle()
+        return
+    }
+
+    if HasTimedOut(State.lastCast, Config.BiteTimeout) {
+        Log("WATCHDOG", "60s sin iniciar minijuego tras lanzar; relanzando")
+        StartCycle()
+    }
+}
+
+HandleFishingOutcome() {
+    if IsFishLost() {
+        HandleFishLost()
+        return true
+    }
+
+    if IsFishCaught() {
+        HandleFishCaught()
+        return true
+    }
+
+    return false
+}
+
+HandleNoArrowTimeout() {
+    if !HasNoArrowTimedOut() {
+        return false
+    }
+
+    Log("WATCHDOG", "30s sin detectar flechas; suponiendo pez perdido")
+    HandleFishLost()
+    return true
 }
 
 StartCycle() {
@@ -377,19 +404,23 @@ StartCycle() {
 }
 
 EnsureResourcesReady() {
-    if IsResourceEmpty("bait") {
-        if !RecoverResource("bait") {
-            return false
-        }
-    }
-
-    if IsResourceEmpty("rod") {
-        if !RecoverResource("rod") {
+    for kind in ["bait", "rod"] {
+        if IsResourceEmpty(kind) && !RecoverResource(kind) {
             return false
         }
     }
 
     return true
+}
+
+HasEmptyResource() {
+    for kind in ["bait", "rod"] {
+        if IsResourceEmpty(kind) {
+            return true
+        }
+    }
+
+    return false
 }
 
 RecoverResource(kind) {
@@ -398,29 +429,22 @@ RecoverResource(kind) {
     State.status := "recoveringResource"
     SafeReleaseAll()
 
-    menuKey := kind = "bait" ? "n" : "m"
-    usePoint := kind = "bait" ? "baitUse" : "rodUse"
-    resourceName := kind = "bait" ? "cebo" : "cana"
-    if kind = "bait" {
-        missingMessage := "No hay cebos disponibles. AutoFishing se detendra."
-    } else {
-        missingMessage := "No hay cañas disponibles. AutoFishing se detendra."
-    }
+    resource := GetResourceConfig(kind)
 
-    Log("RESOURCE", "Intentando seleccionar " resourceName)
-    Send(menuKey)
+    Log("RESOURCE", "Intentando seleccionar " resource.name)
+    Send(resource.menuKey)
     Sleep(Config.Timings.resourceMenuWait)
 
-    if !CheckPointColor(usePoint, Config.Colors.resourceUse, Config.Tolerance.button) {
-        FatalStop(missingMessage)
+    if !CheckPointColor(resource.usePoint, Config.Colors.resourceUse, Config.Tolerance.button) {
+        FatalStop(resource.missingMessage)
         return false
     }
 
-    ClickPoint(usePoint)
+    ClickPoint(resource.usePoint)
     Sleep(Config.Timings.afterResourceSelect)
     Sleep(Config.Timings.afterResourceRecovery)
 
-    Log("RESOURCE", "Recurso seleccionado: " resourceName)
+    Log("RESOURCE", "Recurso seleccionado: " resource.name)
     State.status := "idle"
     return true
 }
@@ -448,7 +472,6 @@ StartFishing() {
     Sleep(Config.Timings.clickDelay)
     Click("Down")
 
-    State.holdingClick := true
     State.status := "fishing"
     State.fishStart := A_TickCount
     State.lastArrowSeen := A_TickCount
@@ -501,7 +524,6 @@ PauseForTension() {
     global State
 
     Click("Up")
-    State.holdingClick := false
     State.status := "tensionRelease"
     State.tensionStart := A_TickCount
     Log("TENSION", "Tension peligrosa; soltando click temporalmente")
@@ -518,7 +540,6 @@ ResumeAfterTension() {
     Sleep(Config.Timings.clickDelay)
     Click("Down")
 
-    State.holdingClick := true
     State.status := "fishing"
     State.tensionStart := 0
     Log("TENSION", "Reanudando pesca tras liberar tension")
@@ -656,7 +677,6 @@ SafeReleaseAll() {
         Click("Up")
     }
 
-    State.holdingClick := false
     ReleaseKey()
     State.keySource := ""
     State.arrowKey := ""
@@ -729,13 +749,27 @@ IsTensionDanger() {
 
 HasNoArrowTimedOut() {
     global Config, State
-    return State.lastArrowSeen > 0 && A_TickCount - State.lastArrowSeen > Config.NoArrowTimeout
+    return HasTimedOut(State.lastArrowSeen, Config.NoArrowTimeout)
+}
+
+HasTimedOut(startTick, timeoutMs) {
+    return startTick > 0 && A_TickCount - startTick > timeoutMs
 }
 
 IsResourceEmpty(kind) {
     global Config
-    pointName := kind = "bait" ? "baitMissingIndicator" : "rodMissingIndicator"
-    return CheckPointColor(pointName, Config.Colors.resourceMissing, Config.Tolerance.resource)
+    resource := GetResourceConfig(kind)
+    return CheckPointColor(resource.missingIndicator, Config.Colors.resourceMissing, Config.Tolerance.resource)
+}
+
+GetResourceConfig(kind) {
+    global Config
+
+    if !Config.Resources.Has(kind) {
+        throw Error("Recurso no configurado: " kind)
+    }
+
+    return Config.Resources[kind]
 }
 
 ClickPoint(name) {
