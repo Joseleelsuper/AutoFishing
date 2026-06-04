@@ -92,6 +92,8 @@ class AutoFishingConfig {
         FishLost: "Pez perdido detectado",
         TensionHigh: "Tensión peligrosa; soltando click temporalmente",
         TensionRecovered: "Tensión estabilizada; manteniendo click",
+        TensionDisabledByProgress: "Comprobación de tensión desactivada; pez por encima del 50%",
+        TensionDisabledByTimeout: "Comprobación de tensión desactivada; tiempo máximo de tensión alcanzado",
         ArrowLeft: "Flecha izquierda detectada",
         ArrowRight: "Flecha derecha detectada",
         ArrowBoth: "Ambos puntos de flecha coinciden; no se cambia dirección",
@@ -112,6 +114,7 @@ class AutoFishingConfig {
         TensionRed: 0xDB0002,
         TensionCritical: 0xFFFFFF,
         TensionDanger: 0xDC0200,
+        FishProgressCheckpoint: 0xFDFDEE,
         FishLost: 0xD2E6FF
     }
 
@@ -129,6 +132,7 @@ class AutoFishingConfig {
         RedTensionBar: { x: 1250, y: 895, color: 0xDB0002 },
         TensionCritical: { x: 1250, y: 895, color: 0xFFFFFF },
         TensionDanger: { x: 1200, y: 895, color: 0xDC0200 },
+        FishProgressCheckpoint: { x: 985, y: 895, color: 0xFDFDEE },
         FishLost: { x: 1125, y: 680, color: 0xD2E6FF }
     }
 
@@ -140,12 +144,13 @@ class AutoFishingConfig {
         Arrow: 35,
         FishingScreen: 35,
         Tension: 30,
+        FishProgress: 20,
         FishLost: 25
     }
 
     static Timings := {
         WaitForFishLoop: 10,
-        ResourceMenuDelay: 200,
+        ResourceMenuDelay: 500,
         ResourceSelectDelay: 500,
         AfterMinigame: 4000,
         AfterCycle: 1000,
@@ -155,11 +160,12 @@ class AutoFishingConfig {
         ArrowHold: 1500,
         RepeatArrowWindow: 5000,
         TensionRelease: 400,
+        TensionDisableTimeout: 60000,
         ScreenLost: 350
     }
 
     static Attempts := {
-        ContinueScreen: 10
+        ContinueScreen: 3
     }
 
     static Counters := {
@@ -357,8 +363,10 @@ class AutoFishingBot {
         activeArrowKey := this.cfg.Text.Empty
         lockedKey := this.cfg.Text.Empty
         screenMissingSince := this.cfg.Counters.Initial
+        minigameStartedAt := this.cfg.Counters.Initial
         enteredMinigame := false
         tensionPaused := false
+        tensionCheckDisabled := false
         startDeadline := A_TickCount + this.cfg.Timings.MinigameStartTimeout
 
         try {
@@ -379,6 +387,7 @@ class AutoFishingBot {
             }
 
             this.Log(this.cfg.LogLevels.Debug, this.cfg.Messages.MinigameStarted)
+            minigameStartedAt := A_TickCount
 
             while (this.active) {
                 if (this.IsFishLost()) {
@@ -397,7 +406,19 @@ class AutoFishingBot {
                     screenMissingSince := this.cfg.Counters.Initial
                 }
 
-                if (this.IsTensionDanger()) {
+                if (!tensionCheckDisabled) {
+                    tensionDisableMessage := this.GetTensionDisableMessage(minigameStartedAt)
+                    if (tensionDisableMessage != this.cfg.Text.Empty) {
+                        tensionCheckDisabled := true
+                        this.Log(this.cfg.LogLevels.Info, tensionDisableMessage)
+                        if (tensionPaused) {
+                            Click(this.cfg.Input.MouseDown)
+                            tensionPaused := false
+                        }
+                    }
+                }
+
+                if (!tensionCheckDisabled && this.IsTensionDanger()) {
                     releaseClickUntil := A_TickCount + this.cfg.Timings.TensionRelease
                     if (!tensionPaused) {
                         this.Log(this.cfg.LogLevels.Warning, this.cfg.Messages.TensionHigh)
@@ -503,6 +524,18 @@ class AutoFishingBot {
         return (this.PointMatches(this.cfg.Points.RedTensionBar, this.cfg.Tolerances.Tension)
         || this.PointMatches(this.cfg.Points.TensionCritical, this.cfg.Tolerances.Tension)
         || this.PointMatches(this.cfg.Points.TensionDanger, this.cfg.Tolerances.Tension))
+    }
+
+    GetTensionDisableMessage(minigameStartedAt) {
+        if (!this.PointMatches(this.cfg.Points.FishProgressCheckpoint, this.cfg.Tolerances.FishProgress)) {
+            return this.cfg.Messages.TensionDisabledByProgress
+        }
+
+        if (A_TickCount - minigameStartedAt >= this.cfg.Timings.TensionDisableTimeout) {
+            return this.cfg.Messages.TensionDisabledByTimeout
+        }
+
+        return this.cfg.Text.Empty
     }
 
     IsFishLost() {
