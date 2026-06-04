@@ -1,1 +1,1 @@
-(Get-FileHash -Algorithm SHA256 AutoFishing.exe).Hash > hash.txt
+(Get-FileHash -Algorithm SHA256 BPSR-AutoFishing.exe).Hash > hash.txt
