@@ -2,7 +2,7 @@
  * @description Automatiza la pesca mediante deteccion de pixeles.
  * @author Joseleelsuper, Haru
  * @date 2026/06/04
- * @version 4.0.0
+ * @version 4.1.1
  ***********************************************************************/
 
 #Requires AutoHotkey v2.0
