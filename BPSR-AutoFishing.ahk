@@ -132,7 +132,7 @@ class AutoFishingConfig {
         RedTensionBar: { x: 1250, y: 895, color: 0xDB0002 },
         TensionCritical: { x: 1250, y: 895, color: 0xFFFFFF },
         TensionDanger: { x: 1200, y: 895, color: 0xDC0200 },
-        FishProgressCheckpoint: { x: 985, y: 895, color: 0xFDFDEE },
+        FishProgressCheckpoint: { x: 845, y: 895, color: 0xFDFDEE },
         FishLost: { x: 1125, y: 680, color: 0xD2E6FF }
     }
 
